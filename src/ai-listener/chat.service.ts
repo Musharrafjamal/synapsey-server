@@ -35,14 +35,108 @@ export class ChatService {
         throw new HttpException('User not found', HttpStatus.NOT_FOUND);
       }
 
+      // Validate that both context (attachments OR prompt) AND question_preference are provided
+      const hasAttachments = createChatDto.attachments && createChatDto.attachments.length > 0;
+      const hasPrompt = createChatDto.prompt && createChatDto.prompt.trim().length > 0;
+      const hasContext = hasAttachments || hasPrompt;
+      const hasQuestionPreference =
+        createChatDto.question_preference && createChatDto.question_preference.length > 0;
+
+      if (!hasContext && hasQuestionPreference) {
+        throw new HttpException(
+          'Context (attachments or prompt) is required',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      if (hasContext && !hasQuestionPreference) {
+        throw new HttpException(
+          'At least one question preference is required',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      if (!hasContext && !hasQuestionPreference) {
+        throw new HttpException(
+          'Both context (attachments or prompt) and at least one question preference are required',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      // Upload attachments if provided
+      let attachmentUrls: string[] = [];
+      if (hasAttachments) {
+        try {
+          const uploadPromises = createChatDto.attachments.map(async (file) => {
+            // Validate file type (images and PDFs only)
+            const allowedMimeTypes = [
+              'image/jpeg',
+              'image/jpg',
+              'image/png',
+              'image/webp',
+              'application/pdf',
+            ];
+            
+            if (!allowedMimeTypes.includes(file.mimetype)) {
+              throw new HttpException(
+                `File type ${file.mimetype} not allowed. Only images (png, jpeg, webp) and PDFs are supported`,
+                HttpStatus.BAD_REQUEST,
+              );
+            }
+
+            const uploadOptions: UploadOptions = {
+              folder: 'chat-attachments',
+              imageType: ImageType.DOCUMENT,
+              uploadedBy: userId,
+              maxFileSize: UploadUtils.mbToBytes(10), // 10MB max for chat attachments
+            };
+
+            const uploadResult = await UploadUtils.uploadFile(
+              file,
+              this.s3Service,
+              this.imageService,
+              uploadOptions,
+            );
+
+            return uploadResult.url;
+          });
+
+          attachmentUrls = await Promise.all(uploadPromises);
+        } catch (error) {
+          if (error instanceof HttpException) {
+            throw error;
+          }
+          throw new HttpException(
+            `Failed to upload attachments: ${error.message}`,
+            HttpStatus.INTERNAL_SERVER_ERROR,
+          );
+        }
+      }
+
+      // Prepare settings object
+      const settings: any = {
+        title: createChatDto.title || 'New Chat',
+        token_used: 0,
+        context: {
+          attachments: attachmentUrls,
+          prompt: createChatDto.prompt || '',
+        },
+      };
+
+      // Add question preferences if provided
+      if (hasQuestionPreference) {
+        settings.question_preference = createChatDto.question_preference.map((pref) => ({
+          ques_type: pref.ques_type,
+          ques_count: pref.ques_count,
+          ques_difficulty: pref.ques_difficulty,
+        }));
+      }
+
       // Create new chat
       const chat = new this.chatModel({
         user: userId,
         status: ChatStatus.ACTIVE,
-        settings: {
-          title: createChatDto.title || 'New Chat',
-          temperature: createChatDto.temperature || 0.7,
-        },
+        settings,
         messages: [],
       });
 
@@ -210,9 +304,6 @@ export class ChatService {
         updateData['settings.title'] = updateChatDto.title;
       }
 
-      if (updateChatDto.temperature !== undefined) {
-        updateData['settings.temperature'] = updateChatDto.temperature;
-      }
       if (updateChatDto.status !== undefined) {
         updateData.status = updateChatDto.status;
       }

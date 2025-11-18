@@ -11,7 +11,8 @@ import {
   UseGuards,
   Request,
   UseInterceptors,
-  UploadedFiles
+  UploadedFiles,
+  HttpException
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { AiListenerService } from './ai-listener.service';
@@ -40,11 +41,46 @@ export class AiListenerController {
 
   @Post('chats')
   @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FilesInterceptor('attachments', 20)) // Allow up to 20 files (matching schema limit)
   async createChat(
     @Request() req: any,
-    @Body() createChatDto: CreateChatDto,
+    @Body() body: any,
+    @UploadedFiles() attachments?: Express.Multer.File[],
   ) {
     const userId = req.user.id as string;
+    
+    // Parse question_preference if it's a string (from form-data)
+    let question_preference = body.question_preference;
+    if (typeof question_preference === 'string') {
+      try {
+        // Try to parse as JSON
+        question_preference = JSON.parse(question_preference);
+      } catch {
+        // If parsing fails, try to handle invalid JSON format
+        throw new HttpException(
+          'Invalid question_preference format. Expected valid JSON array, e.g., [{"ques_type":"mcq","ques_count":10,"ques_difficulty":"easy"}]',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    // Ensure question_preference is an array
+    if (question_preference && !Array.isArray(question_preference)) {
+      // If it's a single object, convert to array
+      if (typeof question_preference === 'object') {
+        question_preference = [question_preference];
+      } else {
+        question_preference = undefined;
+      }
+    }
+
+    const createChatDto: CreateChatDto = {
+      title: body.title,
+      prompt: body.prompt,
+      attachments: attachments || [],
+      question_preference: question_preference,
+    };
+
     return this.chatService.createChat(userId, createChatDto);
   }
 
