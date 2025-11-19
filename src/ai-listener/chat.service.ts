@@ -12,6 +12,7 @@ import { UploadOptions, UploadUtils } from '../s3/upload.utils';
 import { ImageType } from '../schemas/image';
 import { S3Service } from '../s3/s3.service';
 import { ImageService } from '../s3/image.service';
+import { VisionService } from '../vision/vision.service';
 
 @Injectable()
 export class ChatService {
@@ -22,6 +23,7 @@ export class ChatService {
     private readonly aiListenerService: AiListenerService,
     private readonly s3Service: S3Service,
     private readonly imageService: ImageService,
+    private readonly visionService: VisionService,
   ) {}
 
   /**
@@ -113,12 +115,29 @@ export class ChatService {
         }
       }
 
+      // Extract text content from attachments using Google Vision API
+      let attachmentContent: string[] = [];
+      if (hasAttachments && attachmentUrls.length > 0 && this.visionService.isConfigured()) {
+        try {
+          // Extract text from all attachments (images and PDFs) in parallel
+          attachmentContent = await this.visionService.extractTextFromFilesFiltered(attachmentUrls, {
+            useFullTextAnnotation: true,
+            maxRetries: 2,
+          });
+        } catch (error) {
+          // Log error but don't fail chat creation if vision extraction fails
+          console.error('Failed to extract text from attachments:', error);
+          // Continue with empty attachment_content
+        }
+      }
+
       // Prepare settings object
       const settings: any = {
         title: createChatDto.title || 'New Chat',
         token_used: 0,
         context: {
           attachments: attachmentUrls,
+          attachment_content: attachmentContent,
           prompt: createChatDto.prompt || '',
         },
       };

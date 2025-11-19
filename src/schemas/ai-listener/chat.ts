@@ -53,6 +53,8 @@ export interface QuestionPreference {
 export interface ChatContext {
   /** Array of image attachment URLs */
   attachments: string[];
+  /** Extracted content from attachments using Google Vision API */
+  attachment_content?: string[];
   /** Context prompt for the AI (max 10000 characters) */
   prompt: string;
 }
@@ -128,6 +130,10 @@ export class AiListenerChat extends Document {
               message: 'Maximum 10 attachments allowed per message',
             },
           },
+          attachment_content: {
+            type: [String],
+            default: [],
+          },
           prompt: {
             type: String,
             maxlength: [10000, 'Prompt cannot exceed 10000 characters'],
@@ -139,6 +145,7 @@ export class AiListenerChat extends Document {
         _id: false,
         default: () => ({
           attachments: [],
+          attachment_content: [],
           prompt: '',
         }),
       },

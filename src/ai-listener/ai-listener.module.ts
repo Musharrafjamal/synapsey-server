@@ -8,11 +8,13 @@ import { AiListenerChat, ChatSchema } from '../schemas/ai-listener/chat';
 import { AiListenerMessage, MessageSchema } from '../schemas/ai-listener/message';
 import { User, UserSchema } from '../schemas/user';
 import { S3Module } from '../s3/s3.module';
+import { VisionModule } from '../vision/vision.module';
 
 @Module({
   imports: [
     ConfigModule,
     S3Module,
+    VisionModule,
     MongooseModule.forFeature([
       { name: AiListenerChat.name, schema: ChatSchema },
       { name: AiListenerMessage.name, schema: MessageSchema },
