@@ -91,6 +91,110 @@ export class VisionService {
   }
 
   /**
+   * Extract images from PDF buffer using pdf-lib
+   * Note: This is a basic implementation that extracts embedded images.
+   * It may not catch all visual elements rendered as vectors.
+   */
+  private async extractImagesFromPdf(pdfBuffer: Buffer): Promise<string[]> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { PDFDocument, PDFName, PDFRawStream } = require('pdf-lib');
+      
+      const pdfDoc = await PDFDocument.load(pdfBuffer);
+      const { context } = pdfDoc;
+      const imagesBase64: string[] = [];
+
+      // Iterate over all indirect objects to find images
+      // Note: enumerateIndirectObjects returns a Map-like iterator
+      const indirectObjects = context.enumerateIndirectObjects();
+      
+      for (const [ref, obj] of indirectObjects) {
+        // We are looking for PDFRawStream which are images
+        if (obj instanceof PDFRawStream) {
+           const dict = obj.dict;
+           const type = dict.lookup(PDFName.of('Type'));
+           const subtype = dict.lookup(PDFName.of('Subtype'));
+           
+           if (type === PDFName.of('XObject') && subtype === PDFName.of('Image')) {
+             const filter = dict.lookup(PDFName.of('Filter'));
+             console.log(`DEBUG: Found Image XObject. Filter: ${filter?.toString()}`);
+             
+             // Check if filter is DCTDecode (JPEG) or JPXDecode (JPEG2000)
+             // Filter can be a Name or an Array of Names
+             let isJpeg = false;
+             let needsInflate = false;
+             
+             // Helper to check if a filter item is JPEG-like
+             const isJpegFilter = (f: any) => 
+               f === PDFName.of('DCTDecode') || f === PDFName.of('JPXDecode');
+
+             if (filter instanceof PDFName) {
+               isJpeg = isJpegFilter(filter);
+             } else if (filter instanceof require('pdf-lib').PDFArray) {
+               const array = filter as any;
+               // Check for chained filters. 
+               // Common case: [ /FlateDecode /DCTDecode ] -> This means the JPEG data is Zlib compressed.
+               // We need to check if DCTDecode is present, and if FlateDecode is also present.
+               
+               let hasJpeg = false;
+               let hasFlate = false;
+               
+               for (let i = 0; i < array.size(); i++) {
+                 const f = array.get(i);
+                 if (isJpegFilter(f)) hasJpeg = true;
+                 if (f === PDFName.of('FlateDecode')) hasFlate = true;
+               }
+               
+               if (hasJpeg) {
+                 isJpeg = true;
+                 // If FlateDecode is present, we likely need to inflate.
+                 // However, the order matters. Usually filters are applied in order of encoding.
+                 // So decoding should be reverse.
+                 // If filter is [ /FlateDecode /DCTDecode ], it means:
+                 // Encoded = Flate(DCT(RawImage))
+                 // So we need to Inflate first to get the DCT (JPEG) data.
+                 if (hasFlate) needsInflate = true;
+               }
+             }
+
+             if (isJpeg) {
+               let data = obj.getContents();
+               
+               if (needsInflate) {
+                 try {
+                   // eslint-disable-next-line @typescript-eslint/no-require-imports
+                   const zlib = require('zlib');
+                   data = zlib.unzipSync(Buffer.from(data));
+                   console.log('DEBUG: Inflated data for JPEG extraction.');
+                 } catch (inflateError) {
+                   console.error('DEBUG: Failed to inflate data:', inflateError);
+                   // Continue with original data, might fail but worth a try
+                 }
+               }
+               
+               imagesBase64.push(Buffer.from(data).toString('base64'));
+               console.log('DEBUG: Extracted JPEG/JPX image.');
+             } else {
+               console.log('DEBUG: Image is not JPEG/JPX (likely PNG/FlateDecode). Skipping for now as conversion is required.');
+             }
+           }
+        }
+      }
+      
+      if (imagesBase64.length === 0) {
+        console.log('No JPEG images found in PDF for fallback extraction.');
+      } else {
+        console.log(`Found ${imagesBase64.length} JPEG images in PDF for fallback extraction.`);
+      }
+      
+      return imagesBase64;
+    } catch (error) {
+      console.error('Failed to extract images from PDF:', error);
+      return [];
+    }
+  }
+
+  /**
    * Download image from URL and convert to base64
    * @param imageUrl - URL of the image to download
    * @returns Base64 encoded image string
@@ -153,9 +257,31 @@ export class VisionService {
 
         // Extract text using pdf-parse
         const pdfData = await pdfParseFn(pdfBuffer);
+        const extractedText = pdfData.text.trim();
+        console.log(`DEBUG: Extracted text: "${extractedText}", Length: ${extractedText.length}`);
+
+        // Check if text is sufficient, otherwise fallback to OCR
+      if (extractedText.length < 50) {
+          console.log(`PDF text extraction yielded only ${extractedText.length} characters. Falling back to OCR.`);
+          try {
+             const imagesBase64 = await this.extractImagesFromPdf(pdfBuffer);
+             if (imagesBase64.length > 0) {
+               const ocrResults = await Promise.all(
+                 imagesBase64.map(base64 => this.extractTextFromImageBase64(base64, options))
+               );
+               const ocrText = ocrResults.filter(t => t.trim().length > 0).join('\n\n');
+               if (ocrText.length > extractedText.length) {
+                 return ocrText;
+               }
+             }
+          } catch (ocrError) {
+            console.error('Failed to perform OCR fallback for PDF:', ocrError);
+            // Continue with original text if OCR fails
+          }
+      }
 
         // Return extracted text
-        return pdfData.text.trim();
+        return extractedText;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
@@ -183,8 +309,11 @@ export class VisionService {
    * @param options - Extraction options
    * @returns Extracted text content
    */
-  async extractTextFromImage(
-    imageUrl: string,
+  /**
+   * Extract text from a base64 image
+   */
+  async extractTextFromImageBase64(
+    imageBase64: string,
     options: ExtractTextOptions = {},
   ): Promise<string> {
     if (!this.isConfigured()) {
@@ -204,9 +333,6 @@ export class VisionService {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        // Download and convert image to base64
-        const imageBase64 = await this.downloadImageAsBase64(imageUrl);
-
         // Prepare request body
         const requestBody = {
           requests: [
@@ -293,6 +419,20 @@ export class VisionService {
       `Failed to extract text after ${maxRetries + 1} attempts: ${lastError?.message}`,
       HttpStatus.INTERNAL_SERVER_ERROR,
     );
+  }
+
+  /**
+   * Extract text from a single image URL
+   * @param imageUrl - URL of the image to process
+   * @param options - Extraction options
+   * @returns Extracted text content
+   */
+  async extractTextFromImage(
+    imageUrl: string,
+    options: ExtractTextOptions = {},
+  ): Promise<string> {
+    const imageBase64 = await this.downloadImageAsBase64(imageUrl);
+    return this.extractTextFromImageBase64(imageBase64, options);
   }
 
   /**
