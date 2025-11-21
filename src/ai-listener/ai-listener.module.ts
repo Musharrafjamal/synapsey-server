@@ -5,10 +5,15 @@ import { AiListenerService } from './ai-listener.service';
 import { ChatService } from './chat.service';
 import { AiListenerController } from './ai-listener.controller';
 import { AiListenerChat, ChatSchema } from '../schemas/ai-listener/chat';
-import { AiListenerMessage, MessageSchema } from '../schemas/ai-listener/message';
+import {
+  AiListenerMessage,
+  MessageSchema,
+} from '../schemas/ai-listener/message';
 import { User, UserSchema } from '../schemas/user';
 import { S3Module } from '../s3/s3.module';
 import { VisionModule } from '../vision/vision.module';
+
+import { QuestionGeneratorService } from './question-generator.service';
 
 @Module({
   imports: [
@@ -22,7 +27,7 @@ import { VisionModule } from '../vision/vision.module';
     ]),
   ],
   controllers: [AiListenerController],
-  providers: [AiListenerService, ChatService],
-  exports: [AiListenerService, ChatService],
+  providers: [AiListenerService, ChatService, QuestionGeneratorService],
+  exports: [AiListenerService, ChatService, QuestionGeneratorService],
 })
 export class AiListenerModule {}

@@ -1,8 +1,15 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { AiListenerChat, ChatDocument, ChatStatus } from '../schemas/ai-listener/chat';
-import { AiListenerMessage, MessageDocument } from '../schemas/ai-listener/message';
+import {
+  AiListenerChat,
+  ChatDocument,
+  ChatStatus,
+} from '../schemas/ai-listener/chat';
+import {
+  AiListenerMessage,
+  MessageDocument,
+} from '../schemas/ai-listener/message';
 import { User, UserDocument } from '../schemas/user';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { UpdateChatDto } from './dto/update-chat.dto';
@@ -17,8 +24,10 @@ import { VisionService } from '../vision/vision.service';
 @Injectable()
 export class ChatService {
   constructor(
-    @InjectModel(AiListenerChat.name) private readonly chatModel: Model<ChatDocument>,
-    @InjectModel(AiListenerMessage.name) private readonly messageModel: Model<MessageDocument>,
+    @InjectModel(AiListenerChat.name)
+    private readonly chatModel: Model<ChatDocument>,
+    @InjectModel(AiListenerMessage.name)
+    private readonly messageModel: Model<MessageDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly aiListenerService: AiListenerService,
     private readonly s3Service: S3Service,
@@ -29,7 +38,10 @@ export class ChatService {
   /**
    * Create a new chat for a user
    */
-  async createChat(userId: string, createChatDto: CreateChatDto): Promise<ChatDocument> {
+  async createChat(
+    userId: string,
+    createChatDto: CreateChatDto,
+  ): Promise<ChatDocument> {
     try {
       // Verify user exists
       const user = await this.userModel.findById(userId);
@@ -38,11 +50,14 @@ export class ChatService {
       }
 
       // Validate that both context (attachments OR prompt) AND question_preference are provided
-      const hasAttachments = createChatDto.attachments && createChatDto.attachments.length > 0;
-      const hasPrompt = createChatDto.prompt && createChatDto.prompt.trim().length > 0;
+      const hasAttachments =
+        createChatDto.attachments && createChatDto.attachments.length > 0;
+      const hasPrompt =
+        createChatDto.prompt && createChatDto.prompt.trim().length > 0;
       const hasContext = hasAttachments || hasPrompt;
       const hasQuestionPreference =
-        createChatDto.question_preference && createChatDto.question_preference.length > 0;
+        createChatDto.question_preference &&
+        createChatDto.question_preference.length > 0;
 
       if (!hasContext && hasQuestionPreference) {
         throw new HttpException(
@@ -78,7 +93,7 @@ export class ChatService {
               'image/webp',
               'application/pdf',
             ];
-            
+
             if (!allowedMimeTypes.includes(file.mimetype)) {
               throw new HttpException(
                 `File type ${file.mimetype} not allowed. Only images (png, jpeg, webp) and PDFs are supported`,
@@ -117,13 +132,21 @@ export class ChatService {
 
       // Extract text content from attachments using Google Vision API
       let attachmentContent: string[] = [];
-      if (hasAttachments && attachmentUrls.length > 0 && this.visionService.isConfigured()) {
+      if (
+        hasAttachments &&
+        attachmentUrls.length > 0 &&
+        this.visionService.isConfigured()
+      ) {
         try {
           // Extract text from all attachments (images and PDFs) in parallel
-          attachmentContent = await this.visionService.extractTextFromFilesFiltered(attachmentUrls, {
-            useFullTextAnnotation: true,
-            maxRetries: 2,
-          });
+          attachmentContent =
+            await this.visionService.extractTextFromFilesFiltered(
+              attachmentUrls,
+              {
+                useFullTextAnnotation: true,
+                maxRetries: 2,
+              },
+            );
         } catch (error) {
           // Log error but don't fail chat creation if vision extraction fails
           console.error('Failed to extract text from attachments:', error);
@@ -144,11 +167,13 @@ export class ChatService {
 
       // Add question preferences if provided
       if (hasQuestionPreference) {
-        settings.question_preference = createChatDto.question_preference.map((pref) => ({
-          ques_type: pref.ques_type,
-          ques_count: pref.ques_count,
-          ques_difficulty: pref.ques_difficulty,
-        }));
+        settings.question_preference = createChatDto.question_preference.map(
+          (pref) => ({
+            ques_type: pref.ques_type,
+            ques_count: pref.ques_count,
+            ques_difficulty: pref.ques_difficulty,
+          }),
+        );
       }
 
       // Create new chat
@@ -212,7 +237,11 @@ export class ChatService {
   async getChat(chatId: string, userId: string): Promise<ChatDocument> {
     try {
       const chat = await this.chatModel
-        .findOne({ _id: chatId, user: userId, status: { $ne: ChatStatus.DELETED } })
+        .findOne({
+          _id: chatId,
+          user: userId,
+          status: { $ne: ChatStatus.DELETED },
+        })
         .populate({
           path: 'messages',
           options: { sort: { createdAt: 1 } },
@@ -257,8 +286,14 @@ export class ChatService {
 
       // Upload attachments if any
       let attachmentUrls: string[] = [];
-      if (sendMessageData.attachments && sendMessageData.attachments.length > 0) {
-        attachmentUrls = await this.uploadAttachments(sendMessageData.attachments, userId);
+      if (
+        sendMessageData.attachments &&
+        sendMessageData.attachments.length > 0
+      ) {
+        attachmentUrls = await this.uploadAttachments(
+          sendMessageData.attachments,
+          userId,
+        );
       }
 
       // Send message using AI service with uploaded attachment URLs
@@ -352,7 +387,10 @@ export class ChatService {
   /**
    * Delete a chat (soft delete)
    */
-  async deleteChat(chatId: string, userId: string): Promise<{ message: string }> {
+  async deleteChat(
+    chatId: string,
+    userId: string,
+  ): Promise<{ message: string }> {
     try {
       const chat = await this.chatModel.findOneAndUpdate(
         { _id: chatId, user: userId, status: { $ne: ChatStatus.DELETED } },
