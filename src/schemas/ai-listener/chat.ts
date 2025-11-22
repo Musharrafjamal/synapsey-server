@@ -72,6 +72,23 @@ export interface ChatSettings {
   context: ChatContext;
   /** Question generation preferences */
   question_preference?: QuestionPreference[];
+  /**
+   * Generated questions for this chat
+   */
+  questions?: {
+    items: {
+      question: string;
+      options?: string[];
+      answer?: string;
+      type: QuestionType;
+      difficulty: QuestionDifficulty;
+    }[];
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+  };
 }
 
 /**
@@ -179,6 +196,46 @@ export class AiListenerChat extends Document {
         default: [],
         _id: false,
       },
+      questions: {
+        type: {
+          items: {
+            type: [
+              {
+                question: { type: String, required: true },
+                options: { type: [String], default: [] },
+                answer: { type: String },
+                type: {
+                  type: String,
+                  enum: Object.values(QuestionType),
+                  required: true,
+                },
+                difficulty: {
+                  type: String,
+                  enum: Object.values(QuestionDifficulty),
+                  required: true,
+                },
+              },
+            ],
+            default: [],
+            _id: false,
+          },
+          usage: {
+            type: {
+              prompt_tokens: { type: Number, default: 0 },
+              completion_tokens: { type: Number, default: 0 },
+              total_tokens: { type: Number, default: 0 },
+            },
+            default: {
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0,
+            },
+            _id: false,
+          },
+        },
+        required: false,
+        _id: false,
+      },
     },
     required: true,
     _id: false,
@@ -190,6 +247,10 @@ export class AiListenerChat extends Document {
         prompt: '',
       },
       question_preference: [],
+      questions: {
+        items: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
     }),
   })
   settings: ChatSettings;

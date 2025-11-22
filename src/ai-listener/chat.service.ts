@@ -20,6 +20,7 @@ import { ImageType } from '../schemas/image';
 import { S3Service } from '../s3/s3.service';
 import { ImageService } from '../s3/image.service';
 import { VisionService } from '../vision/vision.service';
+import { QuestionGeneratorService } from './question-generator.service';
 
 @Injectable()
 export class ChatService {
@@ -33,6 +34,7 @@ export class ChatService {
     private readonly s3Service: S3Service,
     private readonly imageService: ImageService,
     private readonly visionService: VisionService,
+    private readonly questionGeneratorService: QuestionGeneratorService,
   ) {}
 
   /**
@@ -174,6 +176,27 @@ export class ChatService {
             ques_difficulty: pref.ques_difficulty,
           }),
         );
+
+        // Generate questions
+        try {
+          const { questions, usage } =
+            await this.questionGeneratorService.generateQuestions(
+              createChatDto.prompt,
+              attachmentContent,
+              createChatDto.question_preference,
+            );
+
+          settings.questions = {
+            items: questions,
+            usage: usage,
+          };
+
+          // Update total token usage
+          settings.token_used += usage.total_tokens;
+        } catch (error) {
+          console.error('Failed to generate questions:', error);
+          // Don't fail chat creation, just log error
+        }
       }
 
       // Create new chat

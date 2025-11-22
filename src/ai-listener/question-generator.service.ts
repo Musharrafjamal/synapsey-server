@@ -18,11 +18,21 @@ export class QuestionGeneratorService {
   /**
    * Generate questions based on prompt, attachments, and preferences
    */
+  /**
+   * Generate questions based on prompt, attachments, and preferences
+   */
   async generateQuestions(
     prompt: string | undefined,
     attachmentContent: string[],
     preferences: QuestionPreferenceDto[],
-  ): Promise<string> {
+  ): Promise<{
+    questions: any[];
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+  }> {
     try {
       // 1. Construct System Prompt
       const systemPrompt = this.buildSystemPrompt(preferences);
@@ -48,6 +58,7 @@ export class QuestionGeneratorService {
               { role: 'user', content: userPrompt },
             ],
             temperature: 0.7,
+            response_format: { type: 'json_object' }, // Force JSON output
           }),
         },
       );
@@ -68,7 +79,25 @@ export class QuestionGeneratorService {
         );
       }
 
-      return data.choices[0].message.content;
+      let questions = [];
+      try {
+        const content = data.choices[0].message.content;
+        const parsed = JSON.parse(content);
+        // Handle case where LLM wraps in a key like "questions" or returns array directly
+        questions = Array.isArray(parsed) ? parsed : parsed.questions || [];
+      } catch (e) {
+        console.error('Failed to parse generated questions JSON:', e);
+        // Fallback or empty array, but don't fail the whole request if possible
+        // For now, we return empty array to avoid breaking the flow
+      }
+
+      const usage = data.usage || {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
+
+      return { questions, usage };
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
@@ -90,12 +119,15 @@ export class QuestionGeneratorService {
     });
 
     prompt += `\n\nOutput Format:
-    Provide the questions in a clear, structured format. 
-    For MCQs, include the options and the correct answer.
-    For True/False, include the correct answer.
-    For Long questions, provide the question text.
-    
-    Do not include any conversational filler. Just the questions.`;
+    Provide the output strictly as a JSON object with a key "questions" containing an array of question objects.
+    Each question object should have:
+    - "question": string
+    - "type": string (one of: "long", "mcq", "true_false")
+    - "difficulty": string (one of: "easy", "medium", "hard")
+    - "options": string[] (for MCQs only)
+    - "answer": string (correct answer)
+
+    Do not include any conversational filler or markdown formatting (like \`\`\`json). Just the raw JSON string.`;
 
     return prompt;
   }
